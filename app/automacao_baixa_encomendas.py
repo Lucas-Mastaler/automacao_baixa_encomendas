@@ -342,25 +342,40 @@ def log_exceptions(processo_nome: str):
 # --------------------------------------------------------------------------- #
 # SELENIUM – HELPERS
 # --------------------------------------------------------------------------- #
+# --- no topo: pode remover o webdriver_manager se quiser ---
+# from webdriver_manager.chrome import ChromeDriverManager
+
 def novo_driver() -> webdriver.Chrome:
-    op = webdriver.ChromeOptions()
-    chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/chromium")
-    op.binary_location = chrome_bin
-    op.add_argument("--no-sandbox")
-    op.add_argument("--disable-dev-shm-usage")
-    op.add_argument("--start-maximized")
-    # op.add_argument("--headless=new")  # habilite se necessário
-    op.add_argument("--user-data-dir=/app/chrome-profile")
-    
-    prefs = {
-        "download.default_directory": DOWNLOAD_DIR,
-        "download.prompt_for_download": False,
-        "download.directory_upgrade": True,
-        "safebrowsing.enabled": True
-    }
-    op.add_experimental_option("prefs", prefs)
-    
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=op)
+    import os
+    options = webdriver.ChromeOptions()
+
+    # binário do Chromium do sistema
+    options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
+
+    # flags obrigatórias para container
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+
+    # perfil/sessão (se usar WhatsApp)
+    user_dir = os.environ.get("CHROME_USER_DIR", "/app/chrome-profile")
+    os.makedirs(user_dir, exist_ok=True)
+    options.add_argument(f"--user-data-dir={user_dir}")
+
+    # pasta de download
+    dl = os.environ.get("DOWNLOAD_DIR", "/app/downloads")
+    os.makedirs(dl, exist_ok=True)
+    options.add_experimental_option("prefs", {"download.default_directory": dl})
+
+    # porta de debug ajuda a evitar o DevToolsActivePort
+    options.add_argument("--remote-debugging-port=9222")
+
+    # >>> AQUI o pulo do gato: usar o chromedriver do sistema <<<
+    service = Service("/usr/bin/chromedriver")
+    return webdriver.Chrome(service=service, options=options)
 
 def w(driver) -> WebDriverWait:
     return WebDriverWait(driver, WAIT)
