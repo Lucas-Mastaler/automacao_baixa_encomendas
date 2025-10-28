@@ -1097,11 +1097,29 @@ def _release_lock():
     except Exception:
         pass
 
+import os, glob, time, logging
+
+def _cleanup_old_logs(retention_hours: int = 24, pattern: str = "baixas_encomendas_*.log"):
+    """Remove logs mais antigos que 'retention_hours' horas em LOGS_DIR."""
+    logs_dir = os.environ.get("LOGS_DIR", "/app/logs")
+    now = time.time()
+    for path in glob.glob(os.path.join(logs_dir, pattern)):
+        try:
+            if now - os.path.getmtime(path) > retention_hours * 3600:
+                os.remove(path)
+        except Exception as e:
+            logging.debug(f"Não consegui remover {path}: {e}")
+
 def processar_nfs_pendentes():
     logging.info("🚀 processar_nfs_pendentes() — INÍCIO")
+
+    # garante execução única e só então limpa os logs antigos
     if not _acquire_lock():
         return
-    
+
+    # 🔹 Limpa logs antigos (ex.: >24h)
+    _cleanup_old_logs(retention_hours=24)
+
     try:
         df = ler_tabela_processo_entrada()
         if df.empty:
