@@ -338,51 +338,60 @@ def log_exceptions(processo_nome: str):
 # from webdriver_manager.chrome import ChromeDriverManager
 
 def novo_driver() -> webdriver.Chrome:
-    import os
+    import os, tempfile, shutil, glob, time
     from selenium.webdriver.chrome.service import Service
 
-    # ► NÃO use webdriver_manager no container
     CHROME_BIN = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
     CHROMEDRIVER_BIN = os.environ.get("CHROMEDRIVER_BIN", "/usr/bin/chromedriver")
 
-    # sanity check leve (opcional)
     if not os.path.exists(CHROME_BIN):
         raise RuntimeError(f"Chromium não encontrado em {CHROME_BIN}.")
     if not os.path.exists(CHROMEDRIVER_BIN):
         raise RuntimeError(f"Chromedriver não encontrado em {CHROMEDRIVER_BIN}.")
 
-    op = webdriver.ChromeOptions()
-    op.binary_location = CHROME_BIN
+    options = webdriver.ChromeOptions()
+    options.binary_location = CHROME_BIN
 
-    # Flags importantes para container/headless
-    op.add_argument("--headless=new")
-    op.add_argument("--no-sandbox")
-    op.add_argument("--disable-dev-shm-usage")
-    op.add_argument("--disable-gpu")
-    op.add_argument("--window-size=1920,1080")
+    # Flags essenciais p/ container
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--remote-debugging-port=9222")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--disable-features=VizDisplayCompositor")
+    options.add_argument("--disable-blink-features=AutomationControlled")
 
-    # Estas duas evitam crash em alguns ambientes dockerizados
-    op.add_argument("--remote-debugging-port=9222")
-    op.add_argument("--disable-software-rasterizer")
-    op.add_argument("--disable-features=VizDisplayCompositor")
+    # PERFIL: gere um diretório ÚNICO por execução para evitar o erro "user data dir in use"
+    base_profile = os.environ.get("CHROME_USER_DIR_BASE", "/app/chrome-profiles")
+    os.makedirs(base_profile, exist_ok=True)
+    unique_profile = tempfile.mkdtemp(prefix="run_", dir=base_profile)
+    options.add_argument(f"--user-data-dir={unique_profile}")
 
-    # Evita bloqueios de automação
-    op.add_argument("--disable-blink-features=AutomationControlled")
-
-    # Perfis e downloads persistentes dentro do container
-    user_dir = os.environ.get("CHROME_USER_DIR", "/app/chrome-profile")
+    # Downloads (isolados por execução)
     dl_dir = os.environ.get("DOWNLOAD_DIR", "/app/downloads")
-    os.makedirs(user_dir, exist_ok=True)
     os.makedirs(dl_dir, exist_ok=True)
-    op.add_argument(f"--user-data-dir={user_dir}")
-    op.add_experimental_option("prefs", {"download.default_directory": dl_dir})
+    options.add_experimental_option("prefs", {"download.default_directory": dl_dir})
 
-    # Use SEMPRE o chromedriver do sistema
+    # Workaround: se alguém passar um USER_DATA_DIR fixo por env, limpamos "Singleton*"
+    # (não é necessário com o diretório único, mas deixa resiliente)
+    def _unlock_profile(path: str):
+        for p in glob.glob(os.path.join(path, "Singleton*")):
+            try: os.remove(p)
+            except Exception: pass
+
+    try:
+        _unlock_profile(unique_profile)
+    except Exception:
+        pass
+
     service = Service(CHROMEDRIVER_BIN)
-    driver = webdriver.Chrome(service=service, options=op)
+    driver = webdriver.Chrome(service=service, options=options)
 
+    # Anexa o caminho do perfil ao objeto p/ limpar depois, se quiser
+    driver._lebebe_profile_dir = unique_profile
     return driver
-
 
 def w(driver) -> WebDriverWait:
     return WebDriverWait(driver, WAIT)
@@ -1068,8 +1077,35 @@ def dar_baixa_reservas_produtos(driver, codigos_qtd, numero_nf:str, erros_whats:
 # --------------------------------------------------------------------------- #
 # FLUXO PRINCIPAL
 # --------------------------------------------------------------------------- #
+LOCK_PATH = "/app/.baixas_encomendas.lock"
+
+def _acquire_lock():
+    if os.path.exists(LOCK_PATH):
+        # lock antigo? se passou de 2h, descarta
+        try:
+            if (time.time() - os.path.getmtime(LOCK_PATH)) > 7200:
+                os.remove(LOCK_PATH)
+        except Exception:
+            pass
+    if os.path.exists(LOCK_PATH):
+        logging.info("⛔ Já existe uma execução em andamento. Encerrando.")
+        return False
+    with open(LOCK_PATH, "w") as f:
+        f.write(str(os.getpid()))
+    return True
+
+def _release_lock():
+    try:
+        if os.path.exists(LOCK_PATH):
+            os.remove(LOCK_PATH)
+    except Exception:
+        pass
+
 def processar_nfs_pendentes():
     logging.info("🚀 processar_nfs_pendentes() — INÍCIO")
+    if not _acquire_lock():
+        return
+    
     try:
         df = ler_tabela_processo_entrada()
         if df.empty:
@@ -1153,7 +1189,15 @@ def processar_nfs_pendentes():
                     append_log_sheets("WHATSAPP", err)
 
         finally:
-            driver.quit()
+            # Limpar perfil único do Chrome
+            try:
+                import shutil
+                prof = getattr(driver, "_lebebe_profile_dir", None)
+                if prof and os.path.isdir(prof):
+                    shutil.rmtree(prof, ignore_errors=True)
+                driver.quit()
+            except Exception:
+                pass
             logging.info("✅ processar_nfs_pendentes() — FIM")
 
 
@@ -1165,6 +1209,9 @@ def processar_nfs_pendentes():
         logging.error(f"[FLUXO PRINCIPAL] {e}\n{tb}")
         # opcional: reerguer para sinalizar falha a um orquestrador
         # raise
+    
+    finally:
+        _release_lock()
 
 # --------------------------------------------------------------------------- #
 # MAIN

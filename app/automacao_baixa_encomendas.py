@@ -40,7 +40,6 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.wait import WebDriverWait as _WDW
 from selenium.common.exceptions import (
     TimeoutException,
@@ -55,7 +54,7 @@ import logging
 import os
 from datetime import datetime as dt
 
-LOGS_DIR = os.getenv("LOGS_DIR", "/app/logs")
+LOGS_DIR = r"C:\Users\Lebebe Home Office\Desktop\AUTOMATIZAÇÕES\ENTRADA MATIC\LOGS"  # ajuste se quiser
 os.makedirs(LOGS_DIR, exist_ok=True)
 
 LOG_FILE = os.path.join(
@@ -93,11 +92,7 @@ def enviar_whatsapp_texto(mensagem, chrome_user_dir):
     import time
 
     options = webdriver.ChromeOptions()
-    chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/chromium")
-    options.binary_location = chrome_bin
     options.add_argument(f"--user-data-dir={chrome_user_dir}")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--start-maximized")
     driver = webdriver.Chrome(options=options)
 
@@ -156,17 +151,14 @@ def enviar_whatsapp_texto(mensagem, chrome_user_dir):
 # --------------------------------------------------------------------------- #
 # CONFIGURAÇÕES GERAIS
 # --------------------------------------------------------------------------- #
-DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "/app/downloads")
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+CAMINHO_JSON = r"C:\Users\Lebebe Home Office\Desktop\AUTOMATIZAÇÕES\DOWLOAD NF MATIC\JSON ACESSO AO DRIVE\automatizacao-google-drive-xml-matic.json"
+PLANILHA_ID  = "1Xs-z_LDbB1E-kp9DK-x4-dFkU58xKpYhz038NNrTb54"
 
-CAMINHO_JSON = os.getenv("GOOGLE_SA_JSON_PATH", "/app/creds/service-account.json")
-PLANILHA_ID = os.getenv("PLANILHA_ID", "1Xs-z_LDbB1E-kp9DK-x4-dFkU58xKpYhz038NNrTb54")
+ABA_PROCESSO = "PROCESSO ENTRADA"   # <-- era ABA_PROCESSO antes
+ABA_LOGS     = "LOGS ENTRADA"       # <-- nova aba para logs
 
-ABA_PROCESSO = "PROCESSO ENTRADA"
-ABA_LOGS = "LOGS ENTRADA"
-
-USUARIO_SGI = os.getenv("USUARIO_SGI", "AUTOMACOES.lebebe")
-SENHA_SGI = os.getenv("SENHA_SGI", "automacoes")
+USUARIO_SGI  = "AUTOMACOES.lebebe"
+SENHA_SGI    = "automacoes"
 
 URL_SGI      = "https://smart.sgisistemas.com.br"
 URL_RESERVAS = f"{URL_SGI}/reservas_produtos"
@@ -179,7 +171,7 @@ WAIT = 20   # timeout padrão para WebDriverWait
 def ler_tabela_processo_entrada() -> pd.DataFrame:
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds  = service_account.Credentials.from_service_account_file(CAMINHO_JSON, scopes=scopes)
-    sheets = build("sheets", "v4", credentials=creds).spreadsheets()
+    sheets = build("sheets", "v4", credentials=creds, cache_discovery=False).spreadsheets()
     # Amplia o range para não “cortar” colunas:
     values = (
         sheets.values()
@@ -236,7 +228,7 @@ def marcar_baixa_concluida(num_nf: str):
     """
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds  = service_account.Credentials.from_service_account_file(CAMINHO_JSON, scopes=scopes)
-    sheets = build("sheets", "v4", credentials=creds).spreadsheets()
+    sheets = build("sheets", "v4", credentials=creds, cache_discovery=False).spreadsheets()
 
     # 1) pega apenas a coluna A (número NF) para localizar a linha
     col_nf = (
@@ -303,7 +295,7 @@ def append_log_sheets(processo: str, mensagem: str):
     try:
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
         creds  = service_account.Credentials.from_service_account_file(CAMINHO_JSON, scopes=scopes)
-        sheets = build("sheets", "v4", credentials=creds).spreadsheets().values()
+        sheets = build("sheets", "v4", credentials=creds, cache_discovery=False).spreadsheets()
 
         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         body = {
@@ -346,36 +338,60 @@ def log_exceptions(processo_nome: str):
 # from webdriver_manager.chrome import ChromeDriverManager
 
 def novo_driver() -> webdriver.Chrome:
-    import os
+    import os, tempfile, shutil, glob, time
+    from selenium.webdriver.chrome.service import Service
+
+    CHROME_BIN = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
+    CHROMEDRIVER_BIN = os.environ.get("CHROMEDRIVER_BIN", "/usr/bin/chromedriver")
+
+    if not os.path.exists(CHROME_BIN):
+        raise RuntimeError(f"Chromium não encontrado em {CHROME_BIN}.")
+    if not os.path.exists(CHROMEDRIVER_BIN):
+        raise RuntimeError(f"Chromedriver não encontrado em {CHROMEDRIVER_BIN}.")
+
     options = webdriver.ChromeOptions()
+    options.binary_location = CHROME_BIN
 
-    # binário do Chromium do sistema
-    options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
-
-    # flags obrigatórias para container
+    # Flags essenciais p/ container
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument("--remote-debugging-port=9222")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--disable-features=VizDisplayCompositor")
     options.add_argument("--disable-blink-features=AutomationControlled")
 
-    # perfil/sessão (se usar WhatsApp)
-    user_dir = os.environ.get("CHROME_USER_DIR", "/app/chrome-profile")
-    os.makedirs(user_dir, exist_ok=True)
-    options.add_argument(f"--user-data-dir={user_dir}")
+    # PERFIL: gere um diretório ÚNICO por execução para evitar o erro "user data dir in use"
+    base_profile = os.environ.get("CHROME_USER_DIR_BASE", "/app/chrome-profiles")
+    os.makedirs(base_profile, exist_ok=True)
+    unique_profile = tempfile.mkdtemp(prefix="run_", dir=base_profile)
+    options.add_argument(f"--user-data-dir={unique_profile}")
 
-    # pasta de download
-    dl = os.environ.get("DOWNLOAD_DIR", "/app/downloads")
-    os.makedirs(dl, exist_ok=True)
-    options.add_experimental_option("prefs", {"download.default_directory": dl})
+    # Downloads (isolados por execução)
+    dl_dir = os.environ.get("DOWNLOAD_DIR", "/app/downloads")
+    os.makedirs(dl_dir, exist_ok=True)
+    options.add_experimental_option("prefs", {"download.default_directory": dl_dir})
 
-    # porta de debug ajuda a evitar o DevToolsActivePort
-    options.add_argument("--remote-debugging-port=9222")
+    # Workaround: se alguém passar um USER_DATA_DIR fixo por env, limpamos "Singleton*"
+    # (não é necessário com o diretório único, mas deixa resiliente)
+    def _unlock_profile(path: str):
+        for p in glob.glob(os.path.join(path, "Singleton*")):
+            try: os.remove(p)
+            except Exception: pass
 
-    # >>> AQUI o pulo do gato: usar o chromedriver do sistema <<<
-    service = Service("/usr/bin/chromedriver")
-    return webdriver.Chrome(service=service, options=options)
+    try:
+        _unlock_profile(unique_profile)
+    except Exception:
+        pass
+
+    service = Service(CHROMEDRIVER_BIN)
+    driver = webdriver.Chrome(service=service, options=options)
+
+    # Anexa o caminho do perfil ao objeto p/ limpar depois, se quiser
+    driver._lebebe_profile_dir = unique_profile
+    return driver
 
 def w(driver) -> WebDriverWait:
     return WebDriverWait(driver, WAIT)
@@ -414,6 +430,117 @@ def esperar_sumir_modal(driver, titulo_contains: str | None = None):
         )
     except TimeoutException:
         pass
+
+
+# ==== HELPERS ADICIONAIS (iframe, JS, retries) ====
+
+def switch_to_frame_with(driver, by, value, timeout=10):
+    """Tenta encontrar o locator no root; se não, percorre os iframes."""
+    driver.switch_to.default_content()
+    end = time.time() + timeout
+    while time.time() < end:
+        # tenta no root
+        try:
+            if driver.find_elements(by, value):
+                return True
+        except Exception:
+            pass
+        # tenta nos iframes
+        frames = driver.find_elements(By.TAG_NAME, "iframe")
+        for f in frames:
+            try:
+                driver.switch_to.default_content()
+                driver.switch_to.frame(f)
+                if driver.find_elements(by, value):
+                    return True
+            except Exception:
+                continue
+        time.sleep(0.2)
+    driver.switch_to.default_content()
+    return False
+
+def safe_scroll_into_view(driver, el):
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+    except Exception:
+        pass
+
+def js_set_value(driver, el, text):
+    try:
+        driver.execute_script("arguments[0].value='';", el)
+        driver.execute_script("arguments[0].value=arguments[1];", el, text)
+        driver.execute_script("arguments[0].dispatchEvent(new Event('input',{bubbles:true}));", el)
+        driver.execute_script("arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", el)
+        return True
+    except Exception:
+        return False
+
+def try_type_with_retries(driver, locator, text, wait, label, tries=3):
+    by, value = locator
+    for attempt in range(1, tries + 1):
+        try:
+            found = switch_to_frame_with(driver, by, value, timeout=5)
+            if not found:
+                raise TimeoutException(f"{label}: campo não localizado (root/iframes).")
+
+            el = wait.until(EC.visibility_of_element_located(locator))
+            safe_scroll_into_view(driver, el)
+            try:
+                wait.until(EC.element_to_be_clickable(locator)).click()
+            except (ElementClickInterceptedException, ElementNotInteractableException):
+                driver.execute_script("arguments[0].click();", el)
+
+            try:
+                el.clear()
+            except Exception:
+                driver.execute_script("arguments[0].value='';", el)
+
+            try:
+                el.send_keys(text)
+                return True
+            except ElementNotInteractableException as e:
+                # fallback por JS
+                if js_set_value(driver, el, text):
+                    return True
+                else:
+                    raise e
+
+        except (TimeoutException, ElementNotInteractableException, ElementClickInterceptedException, StaleElementReferenceException) as e:
+            logging.warning(f"{label}: tentativa {attempt}/{tries} falhou ({e}). Recarregando…")
+            try:
+                driver.switch_to.default_content()
+                driver.refresh()
+                WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                if driver.current_url != URL_SGI:
+                    driver.get(URL_SGI)
+            except Exception:
+                pass
+    return False
+
+def click_with_retries(driver, locator, wait, label, tries=3):
+    by, value = locator
+    for attempt in range(1, tries + 1):
+        try:
+            found = switch_to_frame_with(driver, by, value, timeout=5)
+            if not found:
+                raise TimeoutException(f"{label}: botão não localizado (root/iframes).")
+            el = wait.until(EC.element_to_be_clickable(locator))
+            safe_scroll_into_view(driver, el)
+            try:
+                el.click()
+            except (ElementClickInterceptedException, ElementNotInteractableException):
+                driver.execute_script("arguments[0].click();", el)
+            return True
+        except (TimeoutException, ElementClickInterceptedException, ElementNotInteractableException, StaleElementReferenceException) as e:
+            logging.warning(f"{label}: tentativa {attempt}/{tries} falhou ({e}). Recarregando…")
+            try:
+                driver.switch_to.default_content()
+                driver.refresh()
+                WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            except Exception:
+                pass
+    return False
+
 
 # ------------- RETRY GENÉRICO COM RECUPERAÇÃO DE CONTEXTO -------------
 def with_retries(max_tries, label, action, recover):
@@ -512,12 +639,50 @@ def aguardar_status_cancelado(drv, row_id: str, timeout=20) -> bool:
 @log_exceptions("LOGIN SGI")
 def login_sgi(driver: webdriver.Chrome):
     driver.get(URL_SGI)
-    w(driver).until(EC.presence_of_element_located((By.ID, "usuario"))).send_keys(USUARIO_SGI)
-    driver.find_element(By.NAME, "senha").send_keys(SENHA_SGI, Keys.RETURN)
-    w(driver).until(EC.presence_of_element_located((By.ID, "filial_id")))
-    Select(driver.find_element(By.ID, "filial_id")).select_by_visible_text("LEBEBE DEPÓSITO (CD)")
-    safe_click(driver.find_element(By.ID, "botao_prosseguir_informa_local_trabalho"))
-    w(driver).until(EC.url_to_be(f"{URL_SGI}/home"))
+    wait = w(driver)
+
+    # 1) Usuário
+    ok_user = try_type_with_retries(driver, (By.ID, "usuario"), USUARIO_SGI, wait, "Usuário")
+    if not ok_user:
+        raise RuntimeError("Falha ao preencher o usuário após múltiplas tentativas.")
+
+    # 2) Senha (com Enter)
+    ok_pass = try_type_with_retries(driver, (By.NAME, "senha"), SENHA_SGI, wait, "Senha")
+    if not ok_pass:
+        raise RuntimeError("Falha ao preencher a senha após múltiplas tentativas.")
+    try:
+        # tenta Enter direto
+        el_pass = driver.find_element(By.NAME, "senha")
+        el_pass.send_keys(Keys.RETURN)
+    except Exception:
+        # fallback: dispara um Enter via JS
+        driver.execute_script("""
+            const form = document.querySelector('form') || document;
+            form.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
+        """)
+
+    # 3) Seleção da filial (robusta)
+    driver.switch_to.default_content()
+    logging.info("   ⏳ Aguardando select#filial_id…")
+    sel = wait.until(EC.visibility_of_element_located((By.ID, "filial_id")))
+    wait.until(EC.element_to_be_clickable((By.ID, "filial_id")))
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", sel)
+
+    try:
+        # tenta pelo value conhecido do CD (ajuste se o value mudar)
+        Select(sel).select_by_value("5")
+    except Exception:
+        # fallback por JS + eventos
+        driver.execute_script("""
+            const el = arguments[0];
+            el.value = '5';
+            el.dispatchEvent(new Event('input', {bubbles:true}));
+            el.dispatchEvent(new Event('change', {bubbles:true}));
+        """, sel)
+
+    # 4) Prosseguir
+    click_with_retries(driver, (By.ID, "botao_prosseguir_informa_local_trabalho"), wait, "Prosseguir", tries=2)
+    wait.until(EC.url_to_be(f"{URL_SGI}/home"))
     print("✅ Login realizado.")
 
 # --------------------------------------------------------------------------- #
@@ -912,8 +1077,35 @@ def dar_baixa_reservas_produtos(driver, codigos_qtd, numero_nf:str, erros_whats:
 # --------------------------------------------------------------------------- #
 # FLUXO PRINCIPAL
 # --------------------------------------------------------------------------- #
+LOCK_PATH = "/app/.baixas_encomendas.lock"
+
+def _acquire_lock():
+    if os.path.exists(LOCK_PATH):
+        # lock antigo? se passou de 2h, descarta
+        try:
+            if (time.time() - os.path.getmtime(LOCK_PATH)) > 7200:
+                os.remove(LOCK_PATH)
+        except Exception:
+            pass
+    if os.path.exists(LOCK_PATH):
+        logging.info("⛔ Já existe uma execução em andamento. Encerrando.")
+        return False
+    with open(LOCK_PATH, "w") as f:
+        f.write(str(os.getpid()))
+    return True
+
+def _release_lock():
+    try:
+        if os.path.exists(LOCK_PATH):
+            os.remove(LOCK_PATH)
+    except Exception:
+        pass
+
 def processar_nfs_pendentes():
     logging.info("🚀 processar_nfs_pendentes() — INÍCIO")
+    if not _acquire_lock():
+        return
+    
     try:
         df = ler_tabela_processo_entrada()
         if df.empty:
@@ -987,7 +1179,7 @@ def processar_nfs_pendentes():
                         "\n".join(f"- {linha}" for linha in erros_whats)
                     )
                 corpo = "\n\n".join(partes)
-                chrome_user_dir = os.getenv("CHROME_USER_DIR", "/app/chrome-profile")
+                chrome_user_dir = r"C:\Users\Lebebe Home Office\Desktop\AUTOMATIZAÇÕES\CHROME_WPP_AUTOMATION"
                 try:
                     enviar_whatsapp_texto(corpo, chrome_user_dir)
                 except Exception as e:
@@ -997,7 +1189,15 @@ def processar_nfs_pendentes():
                     append_log_sheets("WHATSAPP", err)
 
         finally:
-            driver.quit()
+            # Limpar perfil único do Chrome
+            try:
+                import shutil
+                prof = getattr(driver, "_lebebe_profile_dir", None)
+                if prof and os.path.isdir(prof):
+                    shutil.rmtree(prof, ignore_errors=True)
+                driver.quit()
+            except Exception:
+                pass
             logging.info("✅ processar_nfs_pendentes() — FIM")
 
 
@@ -1009,6 +1209,9 @@ def processar_nfs_pendentes():
         logging.error(f"[FLUXO PRINCIPAL] {e}\n{tb}")
         # opcional: reerguer para sinalizar falha a um orquestrador
         # raise
+    
+    finally:
+        _release_lock()
 
 # --------------------------------------------------------------------------- #
 # MAIN
