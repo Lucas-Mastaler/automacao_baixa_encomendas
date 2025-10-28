@@ -175,9 +175,51 @@ def baixar_xmls_drive():
 # =========================================
 # Sessão 4.0 – Funções SGI genéricas
 # =========================================
-def _driver():
-    op=webdriver.ChromeOptions(); op.add_argument("--start-maximized")
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=op)
+def novo_driver() -> webdriver.Chrome:
+    import os
+    from selenium.webdriver.chrome.service import Service
+
+    # ► NÃO use webdriver_manager no container
+    CHROME_BIN = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
+    CHROMEDRIVER_BIN = os.environ.get("CHROMEDRIVER_BIN", "/usr/bin/chromedriver")
+
+    # sanity check leve (opcional)
+    if not os.path.exists(CHROME_BIN):
+        raise RuntimeError(f"Chromium não encontrado em {CHROME_BIN}.")
+    if not os.path.exists(CHROMEDRIVER_BIN):
+        raise RuntimeError(f"Chromedriver não encontrado em {CHROMEDRIVER_BIN}.")
+
+    op = webdriver.ChromeOptions()
+    op.binary_location = CHROME_BIN
+
+    # Flags importantes para container/headless
+    op.add_argument("--headless=new")
+    op.add_argument("--no-sandbox")
+    op.add_argument("--disable-dev-shm-usage")
+    op.add_argument("--disable-gpu")
+    op.add_argument("--window-size=1920,1080")
+
+    # Estas duas evitam crash em alguns ambientes dockerizados
+    op.add_argument("--remote-debugging-port=9222")
+    op.add_argument("--disable-software-rasterizer")
+    op.add_argument("--disable-features=VizDisplayCompositor")
+
+    # Evita bloqueios de automação
+    op.add_argument("--disable-blink-features=AutomationControlled")
+
+    # Perfis e downloads persistentes dentro do container
+    user_dir = os.environ.get("CHROME_USER_DIR", "/app/chrome-profile")
+    dl_dir = os.environ.get("DOWNLOAD_DIR", "/app/downloads")
+    os.makedirs(user_dir, exist_ok=True)
+    os.makedirs(dl_dir, exist_ok=True)
+    op.add_argument(f"--user-data-dir={user_dir}")
+    op.add_experimental_option("prefs", {"download.default_directory": dl_dir})
+
+    # Use SEMPRE o chromedriver do sistema
+    service = Service(CHROMEDRIVER_BIN)
+    driver = webdriver.Chrome(service=service, options=op)
+
+    return driver
 
 def login(driver, tentativas_max=3):
     """

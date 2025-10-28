@@ -40,7 +40,6 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.wait import WebDriverWait as _WDW
 from selenium.common.exceptions import (
     TimeoutException,
@@ -340,35 +339,50 @@ def log_exceptions(processo_nome: str):
 
 def novo_driver() -> webdriver.Chrome:
     import os
-    options = webdriver.ChromeOptions()
+    from selenium.webdriver.chrome.service import Service
 
-    # binário do Chromium do sistema
-    options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
+    # ► NÃO use webdriver_manager no container
+    CHROME_BIN = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
+    CHROMEDRIVER_BIN = os.environ.get("CHROMEDRIVER_BIN", "/usr/bin/chromedriver")
 
-    # flags obrigatórias para container
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-blink-features=AutomationControlled")
+    # sanity check leve (opcional)
+    if not os.path.exists(CHROME_BIN):
+        raise RuntimeError(f"Chromium não encontrado em {CHROME_BIN}.")
+    if not os.path.exists(CHROMEDRIVER_BIN):
+        raise RuntimeError(f"Chromedriver não encontrado em {CHROMEDRIVER_BIN}.")
 
-    # perfil/sessão (se usar WhatsApp)
+    op = webdriver.ChromeOptions()
+    op.binary_location = CHROME_BIN
+
+    # Flags importantes para container/headless
+    op.add_argument("--headless=new")
+    op.add_argument("--no-sandbox")
+    op.add_argument("--disable-dev-shm-usage")
+    op.add_argument("--disable-gpu")
+    op.add_argument("--window-size=1920,1080")
+
+    # Estas duas evitam crash em alguns ambientes dockerizados
+    op.add_argument("--remote-debugging-port=9222")
+    op.add_argument("--disable-software-rasterizer")
+    op.add_argument("--disable-features=VizDisplayCompositor")
+
+    # Evita bloqueios de automação
+    op.add_argument("--disable-blink-features=AutomationControlled")
+
+    # Perfis e downloads persistentes dentro do container
     user_dir = os.environ.get("CHROME_USER_DIR", "/app/chrome-profile")
+    dl_dir = os.environ.get("DOWNLOAD_DIR", "/app/downloads")
     os.makedirs(user_dir, exist_ok=True)
-    options.add_argument(f"--user-data-dir={user_dir}")
+    os.makedirs(dl_dir, exist_ok=True)
+    op.add_argument(f"--user-data-dir={user_dir}")
+    op.add_experimental_option("prefs", {"download.default_directory": dl_dir})
 
-    # pasta de download
-    dl = os.environ.get("DOWNLOAD_DIR", "/app/downloads")
-    os.makedirs(dl, exist_ok=True)
-    options.add_experimental_option("prefs", {"download.default_directory": dl})
+    # Use SEMPRE o chromedriver do sistema
+    service = Service(CHROMEDRIVER_BIN)
+    driver = webdriver.Chrome(service=service, options=op)
 
-    # porta de debug ajuda a evitar o DevToolsActivePort
-    options.add_argument("--remote-debugging-port=9222")
+    return driver
 
-    # >>> AQUI o pulo do gato: usar o chromedriver do sistema <<<
-    service = Service("/usr/bin/chromedriver")
-    return webdriver.Chrome(service=service, options=options)
 
 def w(driver) -> WebDriverWait:
     return WebDriverWait(driver, WAIT)
