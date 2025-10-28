@@ -49,6 +49,9 @@ from selenium.common.exceptions import (
     StaleElementReferenceException
 )
 import logging
+import os
+logging.info(f"USANDO ESTE ARQUIVO: {__file__}")
+
 
 # --- LOGS EM ARQUIVO + CONSOLE ---
 import os
