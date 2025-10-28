@@ -31,9 +31,7 @@ import pandas as pd
 import traceback
 from functools import wraps
 from datetime import datetime
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from functools import wraps
+from app.google_sheets_auth import load_sa_credentials, values_api, sheets_api
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -57,7 +55,7 @@ logging.info(f"USANDO ESTE ARQUIVO: {__file__}")
 import os
 from datetime import datetime as dt
 
-LOGS_DIR = r"C:\Users\Lebebe Home Office\Desktop\AUTOMATIZAÇÕES\ENTRADA MATIC\LOGS"  # ajuste se quiser
+LOGS_DIR = os.environ.get("LOGS_DIR", "/app/logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
 
 LOG_FILE = os.path.join(
@@ -154,7 +152,6 @@ def enviar_whatsapp_texto(mensagem, chrome_user_dir):
 # --------------------------------------------------------------------------- #
 # CONFIGURAÇÕES GERAIS
 # --------------------------------------------------------------------------- #
-CAMINHO_JSON = r"C:\Users\Lebebe Home Office\Desktop\AUTOMATIZAÇÕES\DOWLOAD NF MATIC\JSON ACESSO AO DRIVE\automatizacao-google-drive-xml-matic.json"
 PLANILHA_ID  = "1Xs-z_LDbB1E-kp9DK-x4-dFkU58xKpYhz038NNrTb54"
 
 ABA_PROCESSO = "PROCESSO ENTRADA"   # <-- era ABA_PROCESSO antes
@@ -173,15 +170,14 @@ WAIT = 20   # timeout padrão para WebDriverWait
 # --------------------------------------------------------------------------- #
 def ler_tabela_processo_entrada() -> pd.DataFrame:
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds  = service_account.Credentials.from_service_account_file(CAMINHO_JSON, scopes=scopes)
-    sheets = build("sheets", "v4", credentials=creds, cache_discovery=False).spreadsheets()
-    # Amplia o range para não “cortar” colunas:
-    values = (
-        sheets.values()
-        .get(spreadsheetId=PLANILHA_ID, range=f"'{ABA_PROCESSO}'!A1:ZZ")
-        .execute()
-        .get("values", [])
-    )
+    creds = load_sa_credentials(scopes)
+    va = values_api(creds)
+    # Amplia o range para não "cortar" colunas:
+    result = va.get(
+        spreadsheetId=PLANILHA_ID,
+        range=f"'{ABA_PROCESSO}'!A1:ZZ"
+    ).execute()
+    values = result.get("values", [])
     if not values:
         return pd.DataFrame()
     # Linha 1 = header
@@ -230,16 +226,16 @@ def marcar_baixa_concluida(num_nf: str):
     Escreve TRUE na coluna I (checkbox) da linha onde está a NF - num_nf.
     """
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds  = service_account.Credentials.from_service_account_file(CAMINHO_JSON, scopes=scopes)
-    sheets = build("sheets", "v4", credentials=creds, cache_discovery=False).spreadsheets()
+    creds = load_sa_credentials(scopes)
+    va = values_api(creds)
 
     # 1) pega apenas a coluna A (número NF) para localizar a linha
-    col_nf = (
-        sheets.values()
-        .get(spreadsheetId=PLANILHA_ID, range=f"'{ABA_PROCESSO}'!A2:A")
-        .execute()
-        .get("values", [])
-    )
+    result = va.get(
+        spreadsheetId=PLANILHA_ID,
+        range=f"'{ABA_PROCESSO}'!A2:A"
+    ).execute()
+    col_nf = result.get("values", [])
+    
     for idx, val in enumerate(col_nf, start=2):          # começa na linha 2
         if val and val[0].strip() == str(num_nf):
             linha_alvo = idx
@@ -251,7 +247,7 @@ def marcar_baixa_concluida(num_nf: str):
     # 2) coluna I == coluna 9 → índice 8 (A=1, …, I=9)
     range_alvo = f"'{ABA_PROCESSO}'!I{linha_alvo}"
     body = {"values": [["TRUE"]]}
-    sheets.values().update(
+    va.update(
         spreadsheetId=PLANILHA_ID,
         range=range_alvo,
         valueInputOption="USER_ENTERED",
@@ -297,14 +293,14 @@ def append_log_sheets(processo: str, mensagem: str):
     """Acrescenta uma linha na aba LOGS ENTRADA com data/hora, processo e mensagem."""
     try:
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds  = service_account.Credentials.from_service_account_file(CAMINHO_JSON, scopes=scopes)
-        sheets = build("sheets", "v4", credentials=creds, cache_discovery=False).spreadsheets()
+        creds = load_sa_credentials(scopes)
+        va = values_api(creds)
 
         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         body = {
             "values": [[agora, processo, mensagem]]
         }
-        sheets.append(
+        va.append(
             spreadsheetId=PLANILHA_ID,
             range=f"'{ABA_LOGS}'!A:C",
             valueInputOption="USER_ENTERED",
@@ -337,9 +333,6 @@ def log_exceptions(processo_nome: str):
 # --------------------------------------------------------------------------- #
 # SELENIUM – HELPERS
 # --------------------------------------------------------------------------- #
-# --- no topo: pode remover o webdriver_manager se quiser ---
-# from webdriver_manager.chrome import ChromeDriverManager
-
 def novo_driver() -> webdriver.Chrome:
     import os, tempfile, shutil, glob, time
     from selenium.webdriver.chrome.service import Service
@@ -1182,7 +1175,7 @@ def processar_nfs_pendentes():
                         "\n".join(f"- {linha}" for linha in erros_whats)
                     )
                 corpo = "\n\n".join(partes)
-                chrome_user_dir = r"C:\Users\Lebebe Home Office\Desktop\AUTOMATIZAÇÕES\CHROME_WPP_AUTOMATION"
+                chrome_user_dir = os.environ.get("CHROME_WPP_USER_DIR", "/app/chrome-whatsapp")
                 try:
                     enviar_whatsapp_texto(corpo, chrome_user_dir)
                 except Exception as e:

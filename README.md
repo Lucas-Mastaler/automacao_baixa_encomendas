@@ -34,7 +34,13 @@ Este projeto automatiza o processo de:
 
 ## 🔧 Variáveis de Ambiente
 
-Copie `.env.example` para `.env` e configure:
+### Credenciais Google (3 opções, em ordem de prioridade):
+
+1. **GOOGLE_SA_JSON** - JSON direto como string (ideal para EasyPanel secrets)
+2. **GOOGLE_SA_JSON_B64** - JSON codificado em base64
+3. **GOOGLE_SA_JSON_PATH** - Caminho para arquivo (padrão: `/app/creds/service-account.json`)
+
+### Configuração Completa:
 
 ```bash
 # Credenciais SGI
@@ -44,19 +50,25 @@ SENHA_SGI=sua_senha_aqui
 # Google Sheets
 PLANILHA_ID=1Xs-z_LDbB1E-kp9DK-x4-dFkU58xKpYhz038NNrTb54
 
-# Diretórios (já configurados para Docker)
-LOGS_DIR=/app/logs
-DOWNLOAD_DIR=/app/downloads
+# Credenciais Google - ESCOLHA UMA DAS 3 OPÇÕES:
+# Opção 1: JSON direto (recomendado para EasyPanel)
+GOOGLE_SA_JSON='{"type":"service_account","project_id":"...",...}'
 
-# Credenciais Google (preferir arquivo montado)
+# Opção 2: JSON em base64
+# GOOGLE_SA_JSON_B64=eyJ0eXBlIjoic2VydmljZV9hY2NvdW50Ii...
+
+# Opção 3: Arquivo montado (padrão)
 GOOGLE_SA_JSON_PATH=/app/creds/service-account.json
 
-# Opcional: JSON completo como string (fallback)
-GSPREAD_CREDENTIALS=
+# Diretórios
+LOGS_DIR=/app/logs
+DOWNLOAD_DIR=/app/downloads
+CHROME_USER_DIR_BASE=/app/chrome-profiles
+CHROME_WPP_USER_DIR=/app/chrome-whatsapp
 
-# Chrome/Chromium
+# Chrome/Chromium (já configurado no Dockerfile)
 CHROME_BIN=/usr/bin/chromium
-CHROME_USER_DIR=/app/chrome-profile
+CHROMEDRIVER_BIN=/usr/bin/chromedriver
 ```
 
 ## 🐳 Docker
@@ -202,18 +214,32 @@ python app/automacao_baixa_encomendas.py
 ## 📦 Dependências Principais
 
 - **selenium** - Automação web
-- **webdriver-manager** - Gerenciamento de drivers
 - **pandas** - Manipulação de dados
 - **google-api-python-client** - API Google Sheets
-- **gspread** - Cliente Google Sheets
-- **oauth2client** - Autenticação Google
+- **google-auth** - Autenticação Google
+- **google-auth-httplib2** - Transport HTTP para Google Auth
+- **google-auth-oauthlib** - OAuth2 para Google Auth
+
+> ⚠️ **Nota:** Não usa `webdriver-manager`. O ChromeDriver é instalado via sistema (apt-get) no Dockerfile.
 
 ## 🐛 Troubleshooting
 
 ### Erro: "Credenciais não encontradas"
+**Opção 1 (Recomendado para EasyPanel):** Use `GOOGLE_SA_JSON`
+- Copie todo o conteúdo do `service-account.json`
+- Cole como variável de ambiente (entre aspas simples)
+
+**Opção 2:** Use `GOOGLE_SA_JSON_B64`
+```bash
+# Gerar base64 do arquivo
+base64 -w 0 service-account.json
+# Cole o resultado na variável GOOGLE_SA_JSON_B64
+```
+
+**Opção 3:** Use arquivo montado
 - Verifique se `service-account.json` está em `/app/creds/`
 - Confirme permissões do arquivo
-- Valide variável `GOOGLE_SA_JSON_PATH`
+- Valide variável `GOOGLE_SA_JSON_PATH=/app/creds/service-account.json`
 
 ### Erro: Selenium/Chrome
 - Verifique se `CHROME_BIN` aponta para `/usr/bin/chromium`
