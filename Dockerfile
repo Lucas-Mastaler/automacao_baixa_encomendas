@@ -20,6 +20,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 3) Código
 COPY app/ ./app
 
+# 3.1) Corrige finais de linha e garante permissão de execução
+RUN sed -i 's/\r$//' /app/app/run-once.sh && chmod +x /app/app/run-once.sh
+
 # 4) Pastas de trabalho
 RUN mkdir -p /app/logs /app/creds /app/downloads /app/chrome-profile
 
